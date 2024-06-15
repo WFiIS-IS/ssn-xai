@@ -1,3 +1,5 @@
+import pickle
+
 import SALib
 import SALib.analyze.dgsm
 import SALib.sample.finite_diff
@@ -6,7 +8,19 @@ from matplotlib import pyplot as plt
 from sklearn.utils import shuffle
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
-from torcheval.metrics import functional as funcmetrics
+
+__all__ = [
+    "shuffle_train_valid_test_split",
+    "model_train",
+    "plot_metrics",
+    "plot_dropping_metrics",
+    "analyze_dgsm",
+    "analyze_fast",
+    "prune",
+    "reduce_datasets",
+    "reduce_linear",
+    "save_models",
+]
 
 
 def shuffle_train_valid_test_split(dataset: TensorDataset,
@@ -26,7 +40,7 @@ def shuffle_train_valid_test_split(dataset: TensorDataset,
     }
 
 
-def model_train(datasets, model, optimizer, criterion, scoring):
+def model_train(datasets, model, optimizer, criterion, scoring, epochs=20):
     losses = []
     val_scores = []
     val_losses = []
@@ -36,7 +50,7 @@ def model_train(datasets, model, optimizer, criterion, scoring):
 
     train_loader = DataLoader(datasets["train"], batch_size=8, shuffle=True)
 
-    for epoch in range(20):
+    for epoch in range(epochs):
         running_loss = 0.0
 
         model.train()
@@ -89,6 +103,14 @@ def plot_metrics(dataset_name, metrics, labels, title=None, filename=None):
         plt.savefig(filename)
 
 
+def plot_dropping_metrics(metrics, labels):
+    plt.plot(range(0, len(metrics)), metrics, label=labels)
+    plt.title("average test metrics vs num of dropped features/inputs")
+    plt.gcf().set_figwidth(10)
+    plt.legend()
+    plt.show()
+
+
 def wrap_model(model):
     def wrapped_model(inputs):
         inputs = torch.tensor(inputs, dtype=torch.float)
@@ -133,7 +155,7 @@ def analyze_fast(headers, model):
 
 def prune(
     datasets, headers, analyzer,
-    model_factory, optimizer_factory, criterion, scoring,
+    model_factory, optimizer_factory, criterion, scoring, epochs,
     labels, dataset_name, title=None
 ):
     headers = headers.copy()
@@ -144,24 +166,32 @@ def prune(
 
     # removing features loop
     while len(headers) > 0:
-        model = model_factory(len(headers))
-        optimizer = optimizer_factory(model)
+        # averaging
+        test_scores = []
 
-        metrics = model_train(datasets, model, optimizer, criterion, scoring)
+        for s in range(5):
+            model = model_factory(len(headers))
+            optimizer = optimizer_factory(model)
 
-        plot_metrics(dataset_name, metrics, labels, title)
+            metrics = model_train(datasets, model, optimizer,
+                                  criterion, scoring, epochs)
 
-        with torch.no_grad():
-            inputs, targets = datasets["test"][:]
-            outputs = model(inputs)
+            with torch.no_grad():
+                inputs, targets = datasets["test"][:]
+                outputs = model(inputs)
 
-            test_score = scoring(outputs, targets)
-            test_loss = criterion(outputs, targets)
+                test_score = scoring(outputs, targets)
+                test_loss = criterion(outputs, targets)
 
-        test_metrics.append(test_score)
+            test_scores.append(test_score)
+
+        plot_metrics(dataset_name, metrics, labels)
+        avg_test_score = tuple(map(lambda x: sum(x)/5, zip(*test_scores)))
+
+        test_metrics.append(avg_test_score)
         models.append(model)
 
-        print(f"Test: loss: {test_loss}, metrics: {test_score}")
+        print(f"Test: loss: {test_loss}, avg metrics: {avg_test_score}")
 
         # sensitive analysis
         if len(headers) <= 1:
@@ -209,7 +239,7 @@ def reduce_datasets(
     return reduced_datasets, reduced_headers
 
 
-def reduce_linear(linear, dropped, num_drop_neurons):
+def reduce_linear(linear: nn.Linear, dropped, num_drop_neurons):
     indexes = list(range(linear.out_features))
     for idx, _ in dropped[:num_drop_neurons]:
         del indexes[idx]
@@ -226,3 +256,11 @@ def reduce_linear(linear, dropped, num_drop_neurons):
     new_linear.load_state_dict(state_dict)
 
     return new_linear
+
+
+def save_models(dataset, layer, models, dropped):
+    with open(f"{dataset}/{layer}.pickle", "wb") as file:
+        pickle.dump({
+            "models": [m.state_dict() for m in models],
+            "dropped": dropped,
+        }, file)
