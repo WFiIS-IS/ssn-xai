@@ -191,6 +191,7 @@ def prune(
         test_metrics.append(avg_test_score)
         models.append(model)
 
+        print(f"num of dropped: {len(dropped)}")
         print(f"Test: loss: {test_loss}, avg metrics: {avg_test_score}")
 
         # sensitive analysis
