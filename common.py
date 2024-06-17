@@ -131,7 +131,11 @@ def analyze_dgsm(headers, model):
     problem.evaluate(wrap_model(model))
     problem.analyze(SALib.analyze.dgsm.analyze)
 
-    min_index = sum(problem.to_df())['dgsm'].argmin()
+    stats = problem.to_df()
+    if isinstance(stats, list):
+        stats = sum(stats)
+
+    min_index = stats['dgsm'].argmin()
 
     return min_index
 
@@ -148,7 +152,11 @@ def analyze_fast(headers, model):
     problem.analyze(SALib.analyze.fast.analyze)
 
     # sum analysis over target classes
-    min_index = sum(problem.to_df())['ST'].argmin()
+    stats = problem.to_df()
+    if isinstance(stats, list):
+        stats = sum(stats)
+
+    min_index = stats['ST'].argmin()
 
     return min_index
 
@@ -176,6 +184,7 @@ def prune(
             metrics = model_train(datasets, model, optimizer,
                                   criterion, scoring, epochs)
 
+            model.eval()
             with torch.no_grad():
                 inputs, targets = datasets["test"][:]
                 outputs = model(inputs)
